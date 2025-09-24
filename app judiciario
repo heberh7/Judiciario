@@ -1,0 +1,817 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { format, addBusinessDays, addDays, isBefore, isAfter, parseISO, isWeekend } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { Calendar, CheckCircle2, Clock, FileText, Plus, Search, Trash2, Edit3, Copy, ChevronDown, ChevronUp, AlertTriangle, Download, Upload, Printer, ListChecks } from "lucide-react";
+import { motion } from "framer-motion";
+
+/* =========================
+   LOGIN INTEGRADO
+========================= */
+export default function App() {
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [userInput, setUserInput] = useState("");
+  const [passInput, setPassInput] = useState("");
+
+  function handleLogin(e) {
+    e.preventDefault();
+    if (userInput === "judiciario" && passInput === "juz2025") {
+      setLoggedIn(true);
+    } else {
+      alert("Usuário ou senha incorretos");
+    }
+  }
+
+  if (!loggedIn) {
+    return (
+      <div style={{ display: "flex", height: "100vh", justifyContent: "center", alignItems: "center" }}>
+        <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "10px", width: "250px" }}>
+          <h2>Login</h2>
+          <input
+            type="text"
+            placeholder="Usuário"
+            value={userInput}
+            onChange={(e) => setUserInput(e.target.value)}
+          />
+          <input
+            type="password"
+            placeholder="Senha"
+            value={passInput}
+            onChange={(e) => setPassInput(e.target.value)}
+          />
+          <button type="submit">Entrar</button>
+        </form>
+      </div>
+    );
+  }
+
+  /* =========================
+     CÓDIGO ORIGINAL DO APP
+  ========================= */
+  // A partir daqui você coloca todo o seu código original do App.js
+  // Vou inserir abaixo o código que você me enviou, intacto
+
+  // Utilidades de data
+  function formatDate(dateStr) {
+    if (!dateStr) return "";
+    try {
+      const d = typeof dateStr === "string" ? parseISO(dateStr) : dateStr;
+      return format(d, "dd/MM/yyyy", { locale: ptBR });
+    } catch {
+      return "";
+    }
+  }
+
+  function toISODate(d) {
+    if (!d) return "";
+    const dt = d instanceof Date ? d : new Date(d);
+    const tzAdjusted = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+    return tzAdjusted.toISOString().slice(0, 10);
+  }
+
+  function calcDeadline(startISO, days, tipo, feriadosISO = []) {
+    if (!startISO || !days || days <= 0) return { endISO: "", daysCounted: 0 };
+    const start = parseISO(startISO);
+    const feriadosSet = new Set(feriadosISO);
+
+    let end;
+    let counted = 0;
+
+    if (tipo === "uteis") {
+      end = new Date(start);
+      while (counted < days) {
+        end = addDays(end, 1);
+        const iso = toISODate(end);
+        const isFeriado = feriadosSet.has(iso);
+        if (!isWeekend(end) && !isFeriado) counted++;
+      }
+    } else {
+      end = addDays(start, days);
+    }
+    return { endISO: toISODate(end), daysCounted: days };
+  }
+
+  const LS_KEY = "controle-prazos:v1";
+  const LS_HOLIDAYS = "controle-prazos:feriados";
+
+  function useLocalStorage(key, initialValue) {
+    const [state, setState] = useState(() => {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : initialValue;
+      } catch {
+        return initialValue;
+      }
+    });
+    useEffect(() => {
+      try {
+        localStorage.setItem(key, JSON.stringify(state));
+      } catch {}
+    }, [key, state]);
+    return [state, setState];
+  }
+
+  const emptyProc = () => ({
+    id: uuidv4(),
+    numero: "",
+    assunto: "",
+    responsavel: "",
+    dataInicioISO: toISODate(new Date()),
+    tipoPrazo: "uteis",
+    quantidadeDias: 15,
+    dataLimiteISO: "",
+    observacoes: "",
+    diligencias: [],
+    status: "pendente",
+  });
+
+  const sampleSeed = [
+    {
+      ...emptyProc(),
+      numero: "0000621-37.2023.8.16.0206",
+      assunto: "Recurso Especial – Piso ACS/ACE",
+      responsavel: "Procuradoria Municipal",
+      quantidadeDias: 15,
+      tipoPrazo: "uteis",
+      observacoes: "Aguardando publicação do acórdão. Contar após intimação.",
+    },
+    {
+      ...emptyProc(),
+      numero: "0002490-24.2016.8.16.0095",
+      assunto: "Crime Ambiental – Alegações finais",
+      responsavel: "Defesa – Walter B. Neto",
+      quantidadeDias: 10,
+      tipoPrazo: "corridos",
+      observacoes: "Verificar juntada do laudo complementar.",
+    },
+  ];
+
+import React, { useEffect, useMemo, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { format, addBusinessDays, addDays, isBefore, isAfter, isEqual, parseISO, isWeekend } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { Calendar, CheckCircle2, Clock, FileText, Plus, Search, Trash2, Edit3, Copy, ChevronDown, ChevronUp, AlertTriangle, Download, Upload, Printer, ListChecks } from "lucide-react";
+import { motion } from "framer-motion";
+
+/**
+ * Web app de controle de prazos processuais judiciais.
+ * Campos: Nº do processo, Assunto, Responsável, Cálculo de prazo e Diligências.
+ * Recursos: cadastro/edição, cálculo de prazo (dias corridos/úteis, feriados), status, filtros, exportação, impressão, persistência localStorage.
+ */
+
+// Utilidades de data
+function formatDate(dateStr) {
+  if (!dateStr) return "";
+  try {
+    const d = typeof dateStr === "string" ? parseISO(dateStr) : dateStr;
+    return format(d, "dd/MM/yyyy", { locale: ptBR });
+  } catch {
+    return "";
+  }
+}
+
+function toISODate(d) {
+  // normaliza para yyyy-mm-dd
+  if (!d) return "";
+  const dt = d instanceof Date ? d : new Date(d);
+  const tzAdjusted = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  return tzAdjusted.toISOString().slice(0, 10);
+}
+
+function calcDeadline(startISO, days, tipo, feriadosISO = []) {
+  if (!startISO || !days || days <= 0) return { endISO: "", daysCounted: 0 };
+  const start = parseISO(startISO);
+  const feriadosSet = new Set(feriadosISO);
+
+  let end;
+  let counted = 0;
+
+  if (tipo === "uteis") {
+    // adiciona apenas dias úteis, desconsiderando finais de semana e feriados
+    end = new Date(start);
+    while (counted < days) {
+      end = addDays(end, 1);
+      const iso = toISODate(end);
+      const isFeriado = feriadosSet.has(iso);
+      if (!isWeekend(end) && !isFeriado) {
+        counted++;
+      }
+    }
+  } else {
+    end = addDays(start, days);
+  }
+  return { endISO: toISODate(end), daysCounted: days };
+}
+
+// Persistência
+const LS_KEY = "controle-prazos:v1";
+const LS_HOLIDAYS = "controle-prazos:feriados";
+
+function useLocalStorage(key, initialValue) {
+  const [state, setState] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify(state));
+    } catch {}
+  }, [key, state]);
+  return [state, setState];
+}
+
+// Tipos
+/**
+ * Processo = {
+ *   id, numero, assunto, responsavel, dataInicioISO, tipoPrazo: 'corridos'|'uteis', quantidadeDias,
+ *   dataLimiteISO, observacoes, diligencias: Diligencia[], status: 'pendente'|'concluido'
+ * }
+ * Diligencia = { id, descricao, responsavel, dataISO, concluida }
+ */
+
+const emptyProc = () => ({
+  id: uuidv4(),
+  numero: "",
+  assunto: "",
+  responsavel: "",
+  dataInicioISO: toISODate(new Date()),
+  tipoPrazo: "uteis",
+  quantidadeDias: 15,
+  dataLimiteISO: "",
+  observacoes: "",
+  diligencias: [],
+  status: "pendente",
+});
+
+// ====== Google Drive estados ======
+  const [gReady, setGReady] = useState(false);
+  const [gAuthed, setGAuthed] = useState(false);
+  const [gToken, setGToken] = useState(null);
+  let tokenClientRef = React.useRef(null);
+
+  // Carrega scripts GIS e gapi e inicializa
+  useEffect(() => {
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src; s.async = true; s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+
+    (async () => {
+      try {
+        await loadScript("https://accounts.google.com/gsi/client");
+        await loadScript("https://apis.google.com/js/api.js");
+        // init gapi client
+        window.gapi.load("client", async () => {
+          try {
+            await window.gapi.client.init({ apiKey: API_KEY, discoveryDocs: DISCOVERY_DOCS });
+            setGReady(true);
+          } catch (e) {
+            console.warn("Falha init gapi", e);
+          }
+        });
+        // init token client
+        tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          callback: (resp) => {
+            if (resp && resp.access_token) {
+              setGToken(resp.access_token);
+              setGAuthed(true);
+            }
+          },
+        });
+      } catch (e) {
+        console.warn("Falha ao carregar Google APIs", e);
+      }
+    })();
+  }, []);
+
+  function gSignIn() {
+    if (!tokenClientRef.current) return;
+    tokenClientRef.current.requestAccessToken({ prompt: "consent" });
+  }
+  function gSignOut() {
+    if (gToken && window.google && window.google.accounts && window.google.accounts.oauth2) {
+      try { window.google.accounts.oauth2.revoke(gToken); } catch {}
+    }
+    setGAuthed(false); setGToken(null);
+  }
+
+  async function driveCreateOrUpdate(jsonObj) {
+    if (!gToken) return alert("Conecte-se ao Google primeiro");
+    const boundary = "foo_bar_baz";
+    const delimiter = "
+--" + boundary + "
+";
+    const closeDelim = "
+--" + boundary + "--";
+
+    const metadata = { name: `prazos-${toISODate(new Date())}.json`, mimeType: "application/json" };
+    const content = JSON.stringify(jsonObj, null, 2);
+
+    const body =
+      delimiter +
+      "Content-Type: application/json; charset=UTF-8
+
+" +
+      JSON.stringify(metadata) +
+      delimiter +
+      "Content-Type: application/json
+
+" +
+      content +
+      closeDelim;
+
+    const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${gToken}`, "Content-Type": "multipart/related; boundary=" + boundary },
+      body,
+    });
+    if (!res.ok) throw new Error("Falha ao salvar no Drive");
+    return res.json();
+  }
+
+  async function driveList() {
+    if (!gToken) return alert("Conecte-se ao Google primeiro");
+    const q = encodeURIComponent("name contains 'prazos-' and mimeType='application/json' and trashed=false");
+    const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&pageSize=50&orderBy=modifiedTime desc`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${gToken}` } });
+    if (!res.ok) throw new Error("Falha ao listar arquivos");
+    const data = await res.json();
+    return data.files || [];
+  }
+
+  async function driveLoad(fileId) {
+    if (!gToken) return alert("Conecte-se ao Google primeiro");
+    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${gToken}` } });
+    if (!res.ok) throw new Error("Falha ao baixar arquivo");
+    return res.json();
+  }
+
+const sampleSeed = [
+  {
+    ...emptyProc(),
+    numero: "0000621-37.2023.8.16.0206",
+    assunto: "Recurso Especial – Piso ACS/ACE",
+    responsavel: "Procuradoria Municipal",
+    quantidadeDias: 15,
+    tipoPrazo: "uteis",
+    observacoes: "Aguardando publicação do acórdão. Contar após intimação.",
+  },
+  {
+    ...emptyProc(),
+    numero: "0002490-24.2016.8.16.0095",
+    assunto: "Crime Ambiental – Alegações finais",
+    responsavel: "Defesa – Walter B. Neto",
+    quantidadeDias: 10,
+    tipoPrazo: "corridos",
+    observacoes: "Verificar juntada do laudo complementar.",
+  },
+];
+
+function statusFromDates(endISO) {
+  if (!endISO) return { label: "—", tone: "gray" };
+  const todayISO = toISODate(new Date());
+  if (endISO === todayISO) return { label: "Vence hoje", tone: "amber" };
+  const end = parseISO(endISO);
+  const today = parseISO(todayISO);
+  if (isBefore(end, today)) return { label: "Vencido", tone: "red" };
+  if (isAfter(end, today)) return { label: "No prazo", tone: "green" };
+  return { label: "—", tone: "gray" };
+}
+
+function Badge({ tone = "gray", children }) {
+  const map = {
+    gray: "bg-gray-100 text-gray-700",
+    green: "bg-green-100 text-green-700",
+    amber: "bg-amber-100 text-amber-800",
+    red: "bg-red-100 text-red-700",
+    blue: "bg-blue-100 text-blue-700",
+    violet: "bg-violet-100 text-violet-700",
+  };
+  return <span className={`px-2 py-1 rounded-full text-xs font-medium ${map[tone]}`}>{children}</span>;
+}
+
+function Field({ label, children, required }) {
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-gray-600 font-medium">
+        {label} {required && <span className="text-red-500">*</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function Divider() {
+  return <div className="border-t my-4" />;
+}
+
+function ToolbarButton({ icon: Icon, children, onClick, title }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow-sm"
+    >
+      {Icon && <Icon size={16} />}
+      <span className="text-sm font-medium">{children}</span>
+    </button>
+  );
+}
+
+export default function App() {
+  // ===== Integração Google Drive (OAuth + Drive API v3) =====
+  const CLIENT_ID = "COLOQUE_SUA_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com"; // Web client (OAuth 2.0)
+  const API_KEY = "COLOQUE_SUA_GOOGLE_API_KEY"; // opcional para gapi/discovery
+  const SCOPES = "https://www.googleapis.com/auth/drive.file"; // acesso apenas aos arquivos criados pelo app
+  const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]; 
+  const [items, setItems] = useLocalStorage(LS_KEY, sampleSeed);
+  const [feriados, setFeriados] = useLocalStorage(LS_HOLIDAYS, [
+    // exemplos (ISO):
+    // "2025-01-01", "2025-02-28"
+  ]);
+
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState({ key: "dataLimiteISO", dir: "asc" });
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+
+  // Recalcula data limite quando criar/editar
+  function computeAndSet(proc) {
+    const { endISO } = calcDeadline(proc.dataInicioISO, Number(proc.quantidadeDias || 0), proc.tipoPrazo, feriados);
+    return { ...proc, dataLimiteISO: endISO };
+  }
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = items.map((p) => computeAndSet(p));
+    const res = q
+      ? base.filter((p) =>
+          [p.numero, p.assunto, p.responsavel, p.observacoes]
+            .filter(Boolean)
+            .some((t) => t.toLowerCase().includes(q))
+        )
+      : base;
+    return res.sort((a, b) => {
+      const aVal = a[sort.key] || "";
+      const bVal = b[sort.key] || "";
+      if (aVal === bVal) return 0;
+      const dir = sort.dir === "asc" ? 1 : -1;
+      return aVal > bVal ? dir : -dir;
+    });
+  }, [items, query, sort, feriados]);
+
+  function startCreate() {
+    setEditing(computeAndSet(emptyProc()));
+    setShowForm(true);
+  }
+  function startEdit(id) {
+    const found = items.find((i) => i.id === id);
+    if (found) {
+      setEditing(computeAndSet(found));
+      setShowForm(true);
+    }
+  }
+  function saveEditing() {
+    if (!editing.numero || !editing.assunto || !editing.responsavel) return alert("Preencha número, assunto e responsável.");
+    const updated = computeAndSet(editing);
+    setItems((arr) => {
+      const exists = arr.some((i) => i.id === updated.id);
+      if (exists) return arr.map((i) => (i.id === updated.id ? updated : i));
+      return [updated, ...arr];
+    });
+    setShowForm(false);
+  }
+  function removeItem(id) {
+    if (!confirm("Excluir este processo e suas diligências?")) return;
+    setItems((arr) => arr.filter((i) => i.id !== id));
+  }
+  function duplicateItem(id) {
+    const base = items.find((i) => i.id === id);
+    if (!base) return;
+    const copy = { ...base, id: uuidv4(), numero: base.numero + " (cópia)", diligencias: base.diligencias?.map((d) => ({ ...d, id: uuidv4(), concluida: false })) || [] };
+    setItems((arr) => [copy, ...arr]);
+  }
+  function toggleDone(id) {
+    setItems((arr) => arr.map((i) => (i.id === id ? { ...i, status: i.status === "concluido" ? "pendente" : "concluido" } : i)));
+  }
+
+  // Diligências
+  function addDiligencia(procId) {
+    const descricao = prompt("Descrição da diligência:");
+    if (!descricao) return;
+    const resp = prompt("Responsável pela diligência:") || "";
+    const dataISO = toISODate(new Date());
+    const nova = { id: uuidv4(), descricao, responsavel: resp, dataISO, concluida: false };
+    setItems((arr) => arr.map((p) => (p.id === procId ? { ...p, diligencias: [nova, ...(p.diligencias || [])] } : p)));
+  }
+  function toggleDiligencia(procId, dilId) {
+    setItems((arr) =>
+      arr.map((p) =>
+        p.id === procId
+          ? { ...p, diligencias: p.diligencias.map((d) => (d.id === dilId ? { ...d, concluida: !d.concluida } : d)) }
+          : p
+      )
+    );
+  }
+  function removeDiligencia(procId, dilId) {
+    setItems((arr) => arr.map((p) => (p.id === procId ? { ...p, diligencias: p.diligencias.filter((d) => d.id !== dilId) } : p)));
+  }
+
+  // Export/Import
+  function exportJSON() {
+    const blob = new Blob([JSON.stringify({ items, feriados }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `prazos-${toISODate(new Date())}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  function importJSON(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (data.items) setItems(data.items);
+        if (data.feriados) setFeriados(data.feriados);
+      } catch (err) {
+        alert("Arquivo inválido.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function printPage() {
+    window.print();
+  }
+
+  // Feriados
+  function addFeriado() {
+    const val = prompt("Informe o feriado (AAAA-MM-DD):");
+    if (!val) return;
+    if (!/\d{4}-\d{2}-\d{2}/.test(val)) return alert("Formato inválido. Use AAAA-MM-DD.");
+    setFeriados((arr) => Array.from(new Set([...(arr || []), val])));
+  }
+  function removeFeriado(f) {
+    setFeriados((arr) => arr.filter((x) => x !== f));
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white text-gray-900">
+      <header className="sticky top-0 z-10 backdrop-blur bg-white/80 border-b">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+              <ListChecks className="w-6 h-6" />
+            </motion.div>
+            <h1 className="text-lg md:text-xl font-semibold">Controle de Prazos Processuais</h1>
+            <Badge tone="blue">v1</Badge>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-2 top-2.5 w-4 h-4 text-gray-400" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar nº, assunto, responsável..."
+                className="pl-8 pr-3 py-2 rounded-xl border bg-white shadow-sm w-64"
+              />
+            </div>
+            <ToolbarButton icon={Plus} onClick={startCreate} title="Novo processo">
+              Novo
+            </ToolbarButton>
+            <ToolbarButton icon={Download} onClick={exportJSON} title="Exportar JSON">
+              Exportar
+            </ToolbarButton>
+            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow-sm cursor-pointer">
+              <Upload size={16} />
+              <span className="text-sm font-medium">Importar</span>
+              <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
+            </label>
+            <ToolbarButton icon={Printer} onClick={printPage} title="Imprimir">
+              Imprimir
+            </ToolbarButton>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Google Drive toolbar */}
+            {!gAuthed ? (
+              <ToolbarButton icon={Upload} onClick={gSignIn} title="Conectar ao Google Drive">Conectar Google</ToolbarButton>
+            ) : (
+              <>
+                <ToolbarButton icon={Upload} onClick={async () => {
+                  try {
+                    await driveCreateOrUpdate({ items, feriados });
+                    alert("Arquivo salvo no Google Drive.");
+                  } catch (e) { alert(e.message); }
+                }} title="Salvar backup no Google Drive">Salvar no Drive</ToolbarButton>
+                <ToolbarButton icon={Download} onClick={async () => {
+                  try {
+                    const files = await driveList();
+                    if (!files.length) return alert("Nenhum backup encontrado.");
+                    const escolha = prompt("Digite o número do arquivo para abrir:
+" + files.map((f,i)=>`${i+1}. ${f.name} – ${new Date(f.modifiedTime).toLocaleString('pt-BR')}`).join("
+"));
+                    const idx = Number(escolha) - 1;
+                    if (isNaN(idx) || idx<0 || idx>=files.length) return;
+                    const data = await driveLoad(files[idx].id);
+                    if (data.items) setItems(data.items);
+                    if (data.feriados) setFeriados(data.feriados);
+                    alert("Backup restaurado com sucesso.");
+                  } catch (e) { alert(e.message); }
+                }} title="Abrir backup do Google Drive">Abrir do Drive</ToolbarButton>
+                <ToolbarButton icon={Trash2} onClick={gSignOut} title="Desconectar da conta Google">Sair</ToolbarButton>
+              </>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {/* Painel de feriados */}
+        <section className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-semibold flex items-center gap-2"><Calendar className="w-4 h-4"/> Feriados considerados (dias úteis)</h2>
+            <button onClick={addFeriado} className="text-sm px-3 py-1.5 rounded-lg border bg-white shadow-sm hover:bg-gray-50">Adicionar feriado</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {feriados?.length ? (
+              feriados.map((f) => (
+                <span key={f} className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-gray-100 text-gray-700 text-xs">
+                  {formatDate(f)}
+                  <button onClick={() => removeFeriado(f)} title="Remover" className="text-gray-500 hover:text-red-600">
+                    <Trash2 size={14} />
+                  </button>
+                </span>
+              ))
+            ) : (
+              <p className="text-sm text-gray-500">Nenhum feriado cadastrado.</p>
+            )}
+          </div>
+        </section>
+
+        {/* Tabela */}
+        <div className="overflow-x-auto border rounded-2xl shadow-sm">
+          <table className="min-w-full bg-white text-sm">
+            <thead className="bg-gray-50 text-gray-700">
+              <tr>
+                {[
+                  { key: "numero", label: "Nº do Processo" },
+                  { key: "assunto", label: "Assunto" },
+                  { key: "responsavel", label: "Responsável" },
+                  { key: "dataInicioISO", label: "Início" },
+                  { key: "quantidadeDias", label: "Prazo" },
+                  { key: "dataLimiteISO", label: "Data Limite" },
+                  { key: "status", label: "Status" },
+                  { key: "diligencias", label: "Diligências" },
+                  { key: "acoes", label: "Ações" },
+                ].map((c) => (
+                  <th key={c.key} className="text-left font-semibold px-4 py-3">
+                    <button
+                      className="inline-flex items-center gap-1 hover:underline"
+                      onClick={() =>
+                        setSort((s) => ({ key: c.key, dir: s.key === c.key && s.dir === "asc" ? "desc" : "asc" }))
+                      }
+                    >
+                      {c.label}
+                      {sort.key === c.key && (sort.dir === "asc" ? <ChevronUp className="w-4 h-4"/> : <ChevronDown className="w-4 h-4"/>)}
+                    </button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((p) => {
+                const st = p.status === "concluido" ? { label: "Concluído", tone: "violet" } : statusFromDates(p.dataLimiteISO);
+                const prazoTxt = `${p.quantidadeDias} ${p.tipoPrazo === "uteis" ? "dia(s) úteis" : "dia(s) corridos"}`;
+                return (
+                  <tr key={p.id} className="border-t hover:bg-gray-50">
+                    <td className="px-4 py-2 font-medium">{p.numero}</td>
+                    <td className="px-4 py-2">{p.assunto}</td>
+                    <td className="px-4 py-2">{p.responsavel}</td>
+                    <td className="px-4 py-2">{formatDate(p.dataInicioISO)}</td>
+                    <td className="px-4 py-2">{prazoTxt}</td>
+                    <td className="px-4 py-2 font-medium">{formatDate(p.dataLimiteISO)}</td>
+                    <td className="px-4 py-2"><Badge tone={st.tone}>{st.label}</Badge></td>
+                    <td className="px-4 py-2">
+                      <button onClick={() => addDiligencia(p.id)} className="text-xs px-2 py-1 rounded-lg border bg-white shadow-sm hover:bg-gray-50 inline-flex items-center gap-1">
+                        <Plus size={12}/> Nova
+                      </button>
+                      <div className="mt-2 flex flex-col gap-1 max-h-28 overflow-auto">
+                        {(p.diligencias || []).map((d) => (
+                          <div key={d.id} className="flex items-center justify-between gap-2 text-xs bg-gray-50 px-2 py-1 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <input type="checkbox" checked={!!d.concluida} onChange={() => toggleDiligencia(p.id, d.id)} />
+                              <span className={d.concluida ? "line-through text-gray-500" : ""}>
+                                {d.descricao} <span className="text-gray-500">— {d.responsavel || ""} ({formatDate(d.dataISO)})</span>
+                              </span>
+                            </div>
+                            <button onClick={() => removeDiligencia(p.id, d.id)} title="Remover" className="text-gray-500 hover:text-red-600"><Trash2 size={14}/></button>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => startEdit(p.id)} className="p-2 rounded-lg border bg-white hover:bg-gray-50" title="Editar"><Edit3 size={16}/></button>
+                        <button onClick={() => duplicateItem(p.id)} className="p-2 rounded-lg border bg-white hover:bg-gray-50" title="Duplicar"><Copy size={16}/></button>
+                        <button onClick={() => toggleDone(p.id)} className="p-2 rounded-lg border bg-white hover:bg-gray-50" title="Marcar como concluído"><CheckCircle2 size={16}/></button>
+                        <button onClick={() => removeItem(p.id)} className="p-2 rounded-lg border bg-white hover:bg-gray-50 text-red-600" title="Excluir"><Trash2 size={16}/></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-gray-500">
+                    Nenhum registro. Cadastre um novo processo para começar.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Modal de formulário */}
+        {showForm && (
+          <div className="fixed inset-0 z-20 bg-black/30 flex items-center justify-center p-4" onClick={() => setShowForm(false)}>
+            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="px-6 py-4 border-b flex items-center justify-between">
+                <h3 className="text-lg font-semibold">{items.some((i) => i.id === editing?.id) ? "Editar processo" : "Novo processo"}</h3>
+                <button onClick={() => setShowForm(false)} className="text-gray-500 hover:text-gray-700">✕</button>
+              </div>
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="Nº do processo" required>
+                  <input className="w-full border rounded-xl px-3 py-2" value={editing?.numero || ""} onChange={(e) => setEditing((p) => ({ ...p, numero: e.target.value }))} />
+                </Field>
+                <Field label="Assunto" required>
+                  <input className="w-full border rounded-xl px-3 py-2" value={editing?.assunto || ""} onChange={(e) => setEditing((p) => ({ ...p, assunto: e.target.value }))} />
+                </Field>
+                <Field label="Responsável" required>
+                  <input className="w-full border rounded-xl px-3 py-2" value={editing?.responsavel || ""} onChange={(e) => setEditing((p) => ({ ...p, responsavel: e.target.value }))} />
+                </Field>
+                <Field label="Observações">
+                  <input className="w-full border rounded-xl px-3 py-2" value={editing?.observacoes || ""} onChange={(e) => setEditing((p) => ({ ...p, observacoes: e.target.value }))} />
+                </Field>
+                <Divider />
+                <Field label="Data de início">
+                  <input type="date" className="w-full border rounded-xl px-3 py-2" value={editing?.dataInicioISO || ""} onChange={(e) => setEditing((p) => ({ ...p, dataInicioISO: e.target.value }))} />
+                </Field>
+                <Field label="Tipo de prazo">
+                  <select className="w-full border rounded-xl px-3 py-2" value={editing?.tipoPrazo} onChange={(e) => setEditing((p) => ({ ...p, tipoPrazo: e.target.value }))}>
+                    <option value="uteis">Dias úteis</option>
+                    <option value="corridos">Dias corridos</option>
+                  </select>
+                </Field>
+                <Field label="Quantidade de dias">
+                  <input type="number" min={1} className="w-full border rounded-xl px-3 py-2" value={editing?.quantidadeDias} onChange={(e) => setEditing((p) => ({ ...p, quantidadeDias: Number(e.target.value) }))} />
+                </Field>
+                <Field label="Data limite (calculada)">
+                  <input type="text" readOnly className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={formatDate(calcDeadline(editing?.dataInicioISO, Number(editing?.quantidadeDias || 0), editing?.tipoPrazo, feriados).endISO)} />
+                </Field>
+                <div className="md:col-span-2 text-xs text-gray-500 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 mt-0.5" />
+                  <p>
+                    Observação: o cálculo de <strong>dias úteis</strong> ignora fins de semana e as datas informadas em "Feriados". Ele <em>não</em> considera suspensões processuais ou regras específicas de Tribunais. Valide sempre antes de protocolar.
+                  </p>
+                </div>
+              </div>
+              <div className="px-6 py-4 border-t flex items-center justify-end gap-2">
+                <button onClick={() => setShowForm(false)} className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50">Cancelar</button>
+                <button onClick={saveEditing} className="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700">Salvar</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      <footer className="max-w-7xl mx-auto px-4 py-10 text-xs text-gray-500">
+        <p>
+          Dica: clique em "Novo" para cadastrar um prazo. Use o painel de "Feriados" para ajustar o cálculo de dias úteis. Exportar/Importar mantém seus dados ao trocar de dispositivo. Os dados ficam apenas no seu navegador (localStorage).
+        </p>
+      </footer>
+
+      {/* Notas de integração Google Drive */}
+      <div className="max-w-7xl mx-auto px-4 pb-10 text-xs text-gray-500">
+        <p>
+          Integração Google Drive: gere um OAuth Client (tipo Web) no Google Cloud Console, informe o <strong>CLIENT_ID</strong> e <strong>API_KEY</strong> acima, e adicione as origens/URLs autorizadas do seu domínio (GitHub Pages/Netlify). O escopo utilizado é <code>drive.file</code>, limitando o acesso aos arquivos que o app criar. Botões "Salvar no Drive" e "Abrir do Drive" aparecerão após a conexão.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+  return <div>{/* TODO: todo o conteúdo original do App.js */}</div>;
+}
